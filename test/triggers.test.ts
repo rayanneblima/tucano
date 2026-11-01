@@ -2,11 +2,12 @@ import { mkdtempSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { beforeEach, describe, expect, it } from 'vitest'
-import type { Agent, Connector, EngineId, Routine, Settings, Trigger } from '../src/shared/types'
+import type { Agent, Connector, EngineId, Message, Routine, Settings, Trigger } from '../src/shared/types'
 import { Db } from '../src/core/db'
 import { fakeEngine } from '../src/core/engines/fake'
 import type { Engine, Turn } from '../src/core/engines/types'
 import { textResult } from '../src/core/gateway'
+import { Memories } from '../src/core/memory'
 import { eventItems, Routines } from '../src/core/routines'
 import { Runner } from '../src/core/runs'
 
@@ -189,5 +190,149 @@ describe('trying a failed routine run again by hand', () => {
     runner.retry(failedReply().id)
     await settle()
     expect(turns[0]!.prompt).toContain('Esta é a rotina "Bom dia"')
+  })
+})
+
+describe('a run fired by an event', () => {
+  const staff: Agent = { ...pm, id: 'a2', name: 'Staff', handle: 'staff' }
+  const hook: Trigger = { kind: 'webhook', token: '' }
+  let prompts: string[]
+  let answers: string[]
+  let failures: number
+  let dbx: Db
+  let fired: Routines
+  let run: Runner
+
+  beforeEach(() => {
+    dbx = new Db(join(mkdtempSync(join(tmpdir(), 'ad-iso-')), 'test.db'))
+    dbx.saveAgent(pm)
+    dbx.saveAgent(staff)
+    dbx.createConversation({ id: 'c1', kind: 'channel', name: 'builds', members: ['a1', 'a2'] })
+    prompts = []
+    answers = []
+    failures = 0
+    const scripted: Engine = {
+      id: 'claude',
+      async *run(t: Turn) {
+        prompts.push(t.prompt)
+        if (failures-- > 0) yield { type: 'error', message: 'o provedor caiu' }
+        else yield { type: 'done', text: answers.shift() ?? 'Feito.', usage: { inputTokens: 1, cacheReadTokens: 0, outputTokens: 1 } }
+      }
+    }
+    const engines: Record<EngineId, Engine> = { claude: scripted, codex: fakeEngine('codex'), opencode: fakeEngine('opencode'), pi: fakeEngine('pi'), gemini: fakeEngine('gemini') }
+    fired = new Routines({ db: dbx, runner: { runRoutine: (r, w) => run.runRoutine(r, w), retryRoutine: (r, w, id) => run.retryRoutine(r, w, id) }, emit: () => {}, now: () => Date.now(), wait: async () => {} })
+    run = new Runner({ db: dbx, engines, settings: async () => settings, emit: () => {}, workDir: mkdtempSync(join(tmpdir(), 'ad-iso-w-')), memory: new Memories({ db: dbx, engines, settings: async () => settings, emit: () => {}, workDir: mkdtempSync(join(tmpdir(), 'ad-iso-m-')) }) })
+  })
+
+  const quiet = async (): Promise<void> => {
+    for (let i = 0; i < 5; i++) {
+      await new Promise((r) => setTimeout(r, 5))
+      await fired.idle()
+      await run.idle()
+    }
+  }
+  const routine = (prompt = 'Repasse o cartão.', trigger: Trigger | undefined = hook): Routine =>
+    fired.save({ name: 'Cartões', agentId: 'a1', conversationId: 'c1', prompt, schedule: { days: trigger ? [] : [0, 1, 2, 3, 4, 5, 6], time: trigger ? '' : '09:00' }, trigger, enabled: true })
+  const token = (r: Routine): string => (dbx.routine(r.id)!.trigger as { token: string }).token
+  const talked = async (): Promise<void> => {
+    await run.send('c1', '@pm MENSAGEM-ANTIGA do canal')
+    await quiet()
+    dbx.setSummary('c1', 'RESUMO-DO-CANAL', Date.now() - 1000)
+    prompts = []
+  }
+  const replies = (): Message[] => dbx.messages().filter((m) => m.author.kind === 'agent')
+
+  it('gets the request and the event, with no messages, summary or conversation header', async () => {
+    await talked()
+    const r = routine()
+    fired.webhook(token(r), 'chegou o cartão DADO-DO-EVENTO')
+    await quiet()
+    expect(prompts).toHaveLength(1)
+    for (const t of ['Repasse o cartão.', 'DADO-DO-EVENTO', 'o pedido abaixo']) expect(prompts[0]).toContain(t)
+    for (const t of ['MENSAGEM-ANTIGA', 'RESUMO-DO-CANAL', 'Conversa em', 'a última mensagem']) expect(prompts[0]).not.toContain(t)
+  })
+
+  it('an automatic retry gets the same, still with no history', async () => {
+    await talked()
+    failures = 1
+    const r = routine()
+    fired.webhook(token(r), 'chegou o cartão DADO-DO-EVENTO')
+    await quiet()
+    expect(prompts).toHaveLength(2)
+    for (const p of prompts) {
+      for (const t of ['Repasse o cartão.', 'DADO-DO-EVENTO']) expect(p).toContain(t)
+      expect(p).not.toContain('MENSAGEM-ANTIGA')
+    }
+    expect(replies().at(-1)!.run!.status).toBe('done')
+  })
+
+  it('tried again by hand, gets the same, still with no history', async () => {
+    await talked()
+    failures = 99
+    fired.webhook(token(routine()), 'chegou o cartão DADO-DO-EVENTO')
+    await quiet()
+    const failed = replies().at(-1)!
+    expect(failed.run!.status).toBe('failed')
+    failures = 0
+    prompts = []
+    run.retry(failed.id)
+    await quiet()
+    for (const t of ['Repasse o cartão.', 'DADO-DO-EVENTO']) expect(prompts[0]).toContain(t)
+    expect(prompts[0]).not.toContain('MENSAGEM-ANTIGA')
+    expect(dbx.message(failed.id)!.run).toMatchObject({ status: 'done' })
+    expect(dbx.message(failed.id)!.run!.isolated).toBeUndefined()
+  })
+
+  it('a scheduled routine, also retried, and "run now" without an event still read the conversation', async () => {
+    await talked()
+    failures = 1
+    fired.runNow(routine('Resuma o dia.', undefined).id)
+    await quiet()
+    expect(prompts).toHaveLength(2)
+    for (const p of prompts) {
+      for (const t of ['RESUMO-DO-CANAL', 'a última mensagem', 'Resuma o dia.']) expect(p).toContain(t)
+      expect(p).not.toContain('o pedido abaixo')
+    }
+    prompts = []
+    fired.runNow(routine().id)
+    await quiet()
+    expect(prompts[0]).toContain('RESUMO-DO-CANAL')
+  })
+
+  it('counts toward the reference in the title, then in the request, and keeps it on a retry', async () => {
+    const t = token(routine('Repasse o cartão SIM-12.'))
+    fired.webhook(t, 'cartão OAB-65')
+    await quiet()
+    expect(replies().at(-1)!.run!.work).toBe('OAB-65')
+    fired.webhook(t, 'cartão sem referência')
+    await quiet()
+    expect(replies().at(-1)!.run!.work).toBe('SIM-12')
+    failures = 1
+    fired.webhook(t, 'outro cartão OAB-66')
+    await quiet()
+    expect(replies().at(-1)!.run!.work).toBe('OAB-66')
+  })
+
+  it('a person, a mention and a continuation after it read the conversation', async () => {
+    const r = routine()
+    answers = ['Repassei, @staff confira.', 'Conferi.']
+    fired.webhook(token(r), 'chegou o cartão DADO-DO-EVENTO')
+    await quiet()
+    expect(prompts).toHaveLength(2) // the mention
+    expect(prompts[0]).not.toContain('Conversa em')
+    expect(prompts[1]).toContain('Repassei, @staff confira.')
+    expect(prompts[1]).toContain('Repasse o cartão.')
+
+    prompts = []
+    await run.send('c1', '@pm como ficou?')
+    await quiet()
+    expect(prompts[0]).toContain('Repassei, @staff confira.')
+
+    prompts = []
+    const paused = replies().at(-1)!
+    dbx.saveMessage({ ...paused, run: { ...paused.run!, status: 'paused' } })
+    await run.continue(paused.id)
+    await quiet()
+    expect(prompts[0]).toContain('como ficou?')
   })
 })

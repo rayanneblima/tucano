@@ -289,7 +289,8 @@ export function transcriptBlocks(opts: TranscriptOpts): { blocks: string[]; bloc
 
   const shown = messages.filter((m) => m.author.kind !== 'system' && body(m))
   const where = conversation.kind === 'dm' ? L(`DM com ${me}`, `DM with ${me}`) : `#${conversation.name}`
-  const head = [
+  // A task with no conversation (a trigger's run) isn't an empty conversation.
+  const head = !shown.length && !summary?.trim() && task ? [] : [
     summary?.trim() && `${L(`Resumo do que veio antes em ${where}`, `Summary of what came before in ${where}`)}:\n${summary.trim()}`,
     `${summary?.trim() ? L('Mensagens desde o resumo', 'Messages since the summary') : L(`Conversa em ${where}`, `Conversation in ${where}`)}, ${L('das mais antigas pras mais novas', 'oldest to newest')}:`
   ].filter((b): b is string => !!b)

@@ -151,6 +151,7 @@ export interface Run {
   browser?: boolean // used its browser in this reply (the message links to the live view)
   budget?: number // 'paused': the per-reply budget it reached, in counted tokens
   task?: string // what this reply was asked beyond the conversation; kept only while it can be tried again or go on
+  isolated?: boolean // a trigger's run, which doesn't read the conversation; kept along with the task
   work?: string // the piece of work it counts toward, e.g. the issue "OAB-65" (spec §20)
   agentDraft?: AgentDraft // an agent the Tuca proposed with propor_agente, shown as a card
 }
