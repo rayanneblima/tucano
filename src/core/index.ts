@@ -3,7 +3,8 @@
 // over a MessagePort handed out by the main process.
 import { execFile, spawn } from 'node:child_process'
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
-import { userInfo } from 'node:os'
+import { homedir, userInfo } from 'node:os'
+import { Terminals } from './terminal'
 import { join } from 'node:path'
 import { randomUUID } from 'node:crypto'
 import type { MessagePortMain } from 'electron'
@@ -318,6 +319,15 @@ const chrome =
     : undefined
 const host: BrowserHost = chrome ? (agentId, op, args) => chrome.run(agentId, op, args) : electronHost
 
+const terminals = new Terminals({
+  emit,
+  env: loginEnv,
+  shell: () => (isWin ? (process.env['ComSpec'] ?? 'cmd.exe') : loginShell()),
+  allowed: !serverMode,
+  cwd: () => homedir()
+})
+process.on('exit', () => terminals.closeAll())
+
 const secrets = new Secrets(db, fake ? plainCipher : mainCipher(process.parentPort))
 // The person's own apps, through agent-desktop (none on a server: no screen there).
 // Off a Mac it needs the installed apps to know each one's program.
@@ -562,6 +572,7 @@ const api: Api = {
   snapshot: () => ({
     settings: settings(),
     agents: db.agents(),
+    terminal: !serverMode,
     conversations: db.conversations(),
     messages: db.messages(),
     connectors: connectors.list(),
@@ -646,8 +657,14 @@ const api: Api = {
   },
   // Everything that only made sense there goes too: replies still running stop,
   // its routines, its pending approvals.
+  terminalOpen: ({ channelId, cols, rows }) => terminals.open(channelId, cols, rows),
+  terminalInput: ({ channelId, data }) => terminals.input(channelId, data),
+  terminalResize: ({ channelId, cols, rows }) => terminals.resize(channelId, cols, rows),
+  terminalClose: ({ channelId }) => terminals.close(channelId),
+
   deleteConversation: ({ id }) => {
     if (!db.conversation(id)) return
+    terminals.close(id)
     for (const m of db.messages()) if (m.conversationId === id && (m.run?.status === 'working' || m.run?.status === 'waiting_approval')) runner.stop(m.id)
     for (const r of db.routines()) if (r.conversationId === id) routines.remove(r.id)
     for (const a of db.approvals()) if (a.conversationId === id && a.state === 'pending' && db.decideApproval(a.id, 'expired', L('O canal foi excluído.', 'The channel was deleted.'))) emit({ type: 'approval', approval: db.approvals().find((x) => x.id === a.id)! })

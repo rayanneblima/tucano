@@ -4,6 +4,7 @@ import type { Os, Agent, BrowserInput, Approval, Artifact, ImageUpload, BrowserV
 export interface Snapshot {
   settings: Settings
   agents: Agent[]
+  terminal: boolean // this app can open a terminal (not as a server)
   conversations: Conversation[]
   messages: Message[]
   connectors: Connector[]
@@ -39,6 +40,10 @@ export interface Api {
   settleDraft(p: { messageId: string; agentId?: string }): void // the card is done: created elsewhere (the introduction), or dismissed
   updateSettings(p: { patch: Partial<Omit<Settings, 'engines'>> }): void
   refreshEngines(): void
+  terminalOpen(p: { channelId: string; cols: number; rows: number }): Promise<{ output: string }>
+  terminalInput(p: { channelId: string; data: string }): void
+  terminalResize(p: { channelId: string; cols: number; rows: number }): void
+  terminalClose(p: { channelId: string }): void
   loginEngine(p: { engine: EngineId }): { opened: boolean; command: string } // not opened: no terminal to open, the person runs the command
   installEngine(p: { engine: EngineId }): { opened: boolean; command: string; needsNode?: boolean } // needsNode: an npm install with no npm here
   desktopStatus(): Promise<{ installed: boolean; version?: string; accessibility?: string; suggestion?: string; server?: boolean }> // agent-desktop, for the person's apps
@@ -117,6 +122,8 @@ export type CoreEvent =
   | { type: 'routine'; routine: Routine }
   | { type: 'routine_removed'; id: string }
   | { type: 'conversation_removed'; id: string }
+  | { type: 'terminal'; channelId: string; data: string }
+  | { type: 'terminal_exit'; channelId: string }
   | { type: 'skill'; skill: Skill }
   | { type: 'skill_removed'; id: string }
 

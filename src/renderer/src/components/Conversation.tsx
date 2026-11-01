@@ -1,6 +1,6 @@
 import { L } from '../../../shared/lang'
 import { CODE_SPANS } from '../../../shared/types'
-import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
+import { lazy, Suspense, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
 import Markdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import {
@@ -35,12 +35,15 @@ import {
   type Step,
   IMAGE_MIMES,
   MAX_IMAGES_PER_MESSAGE,
-  isTeam
+  isTeam,
+  toggleTerminal
 } from '../store'
 import { AgentAvatar, Icon, MeAvatar, duration, time, tokens, usd } from './ui'
 import { ArtifactCard, BrowserCard, ServiceCard, SidePanel } from './Panel'
 import { when } from './Routines'
 import { AgentProposal } from './Tuca'
+
+const TerminalSide = lazy(() => import('./Terminal').then((m) => ({ default: m.TerminalSide }))) // xterm only for who opens it
 
 export function ConversationView({ id }: { id: string }): ReactNode {
   const conv = useStore((s) => s.conversations.find((c) => c.id === id))
@@ -55,6 +58,8 @@ export function ConversationView({ id }: { id: string }): ReactNode {
   const messages = useStore((s) => s.messages.filter((m) => m.conversationId === id))
   const focus = useStore((s) => (s.view?.kind === 'conversation' && s.view.id === id ? s.view.message : undefined))
   const [showSummary, setShowSummary] = useState(false)
+  const canTerminal = useStore((s) => s.terminal)
+  const showTerminal = useStore((s) => s.terminalOpen)
 
   if (!conv) return <div className="empty">{L('Conversa não encontrada.', 'Conversation not found.')}</div>
   const dmAgent = conv.kind === 'dm' ? members[0] : undefined
@@ -83,6 +88,11 @@ export function ConversationView({ id }: { id: string }): ReactNode {
                 </button>
               </div>
             )}
+            {conv.kind === 'channel' && canTerminal && (
+              <button className={`btn btn--ghost ${showTerminal ? 'is-active' : ''}`} title={L('O seu terminal, neste computador', 'Your terminal, on this computer')} onClick={toggleTerminal}>
+                <Icon name="terminal" size={14} /> {L('Terminal', 'Terminal')}
+              </button>
+            )}
             <button className={`btn btn--ghost ${showSummary ? 'is-active' : ''}`} title={L('O que esta conversa já cobriu', 'What this conversation has covered')} onClick={() => setShowSummary(!showSummary)}>
               <Icon name="book" size={14} /> {L('Resumo', 'Summary')}
             </button>
@@ -99,6 +109,7 @@ export function ConversationView({ id }: { id: string }): ReactNode {
         <MessageList messages={messages} conversationId={id} empty={conv.kind === 'channel' && members.length === 0} focus={focus} />
         <Composer conversationId={id} members={members} placeholder={dmAgent ? L(`Mensagem para ${dmAgent.name}`, `Message ${dmAgent.name}`) : L(`Mensagem em #${title}`, `Message #${title}`)} />
       </section>
+      {conv.kind === 'channel' && canTerminal && showTerminal && <Suspense fallback={null}><TerminalSide key={id} channelId={id} /></Suspense>}
       <SidePanel />
     </div>
   )

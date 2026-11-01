@@ -17,7 +17,8 @@
     "dist": "sh scripts/dist.sh",
     "dist:win": "npm run build && electron-builder --win nsis --x64 --publish never",
     "install-app": "npm run dist && sh scripts/install-app.sh",
-    "release": "sh scripts/release.sh"
+    "release": "sh scripts/release.sh",
+    "postinstall": "node scripts/pty-helper.mjs"
   },
   "devDependencies": {
     "@types/node": "^26.6.5",
@@ -39,6 +40,8 @@
   "dependencies": {
     "@fontsource-variable/inter": "^5.3.0",
     "@modelcontextprotocol/sdk": "^1.32.1",
+    "@xterm/addon-fit": "^0.11.0",
+    "@xterm/xterm": "^6.0.0",
     "electron-updater": "^6.8.11",
     "gsap": "^3.14.2",
     "smol-toml": "^1.9.1"
@@ -133,6 +136,12 @@
         "from": "build/icon.png",
         "to": "icon.png"
       }
+    ],
+    "asarUnpack": [
+      "node_modules/node-pty/**"
     ]
+  },
+  "optionalDependencies": {
+    "node-pty": "^1.1.0"
   }
 }

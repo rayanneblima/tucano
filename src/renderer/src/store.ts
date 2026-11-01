@@ -63,6 +63,8 @@ export interface State {
   models: Model[]
   agents: Agent[]
   connectors: Connector[]
+  terminal: boolean // this app can open a terminal
+  terminalOpen: boolean // showing on the side of the channel
   conversations: Conversation[]
   messages: Message[]
   approvals: Approval[]
@@ -112,6 +114,8 @@ let state: State = {
   models: MODELS,
   agents: [],
   connectors: [],
+  terminal: false,
+  terminalOpen: false,
   conversations: [],
   messages: [],
   approvals: [],
@@ -180,7 +184,19 @@ function withSettings(s: State, settings: Settings): State {
   return { ...s, settings, me: { name, initials: initials(name) } }
 }
 
+// A terminal's output goes straight to the terminal on screen: state would redraw the app at every byte.
+type TerminalEvent = Extract<CoreEvent, { type: 'terminal' | 'terminal_exit' }>
+const terminalListeners = new Set<(e: TerminalEvent) => void>()
+export const onTerminal = (listener: (e: TerminalEvent) => void): (() => void) => {
+  terminalListeners.add(listener)
+  return () => terminalListeners.delete(listener)
+}
+
 function apply(e: CoreEvent): void {
+  if (e.type === 'terminal' || e.type === 'terminal_exit') {
+    terminalListeners.forEach((l) => l(e))
+    return
+  }
   set((s) => {
     switch (e.type) {
       case 'message': {
@@ -243,7 +259,8 @@ function apply(e: CoreEvent): void {
           conversations: left,
           messages: s.messages.filter((m) => m.conversationId !== e.id),
           view: here ? (first ? { kind: 'conversation', id: first.id } : { kind: 'new-agent' }) : s.view,
-          panel: here ? null : s.panel
+          panel: here ? null : s.panel,
+          terminalOpen: here ? false : s.terminalOpen
         }
       }
       case 'routine_removed':
@@ -273,6 +290,7 @@ export async function start(): Promise<void> {
       ready: true,
       view,
       agents: snap.agents,
+      terminal: snap.terminal,
       conversations: snap.conversations,
       messages: snap.messages,
       connectors: snap.connectors,
@@ -313,6 +331,7 @@ export const navigate = (view: View): void =>
   set((s) => ({
     ...s,
     view,
+    terminalOpen: s.view?.kind === 'conversation' && view.kind === 'conversation' && s.view.id === view.id ? s.terminalOpen : false,
     navOpen: false,
     panel: s.view?.kind === view.kind && JSON.stringify(s.view) === JSON.stringify(view) ? s.panel : null,
     conversations:
@@ -434,6 +453,11 @@ export function patchAgent(agentId: string, patch: Partial<Agent>): void {
   void saveAgent({ ...agent, ...patch }, channelIds)
 }
 
+export const toggleTerminal = (): void => set((s) => ({ ...s, terminalOpen: !s.terminalOpen }))
+export const terminalOpen = (channelId: string, cols: number, rows: number): Promise<{ output: string }> => call('terminalOpen', { channelId, cols, rows })
+export const terminalInput = (channelId: string, data: string): void => void call('terminalInput', { channelId, data })
+export const terminalResize = (channelId: string, cols: number, rows: number): void => void call('terminalResize', { channelId, cols, rows })
+export const terminalClose = (channelId: string): void => void call('terminalClose', { channelId })
 export const openPanel = (panel: Panel | null): void => set((s) => ({ ...s, panel }))
 export const openDialog = (dialog: Dialog | null): void => set((s) => ({ ...s, dialog, navOpen: dialog ? false : s.navOpen }))
 export const setTab = (page: string, tab: string): void => set((s) => ({ ...s, tabs: { ...s.tabs, [page]: tab } }))

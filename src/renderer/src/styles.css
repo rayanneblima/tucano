@@ -6454,3 +6454,34 @@ kbd {
 .app-picker .app-picker__head input:focus { border: 0; box-shadow: none; outline: none; background: transparent; padding: 4px 0; }
 
 .apps-setup__how { display: block; margin-top: 4px; color: var(--text-2); font-size: 12px; }
+
+/* The person's terminal */
+.terminal-panel__screen {
+  flex: 1;
+  min-height: 0;
+  background: #1c1b19;
+}
+/* On xterm's own element, which is where its fit counts padding. */
+.terminal-panel__screen .xterm {
+  height: 100%;
+  padding: 8px;
+}
+.terminal-panel__ended {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border);
+}
+@media (max-width: 760px) {
+  .terminal-panel {
+    position: fixed;
+    inset: 0;
+    z-index: 55;
+    width: 100%;
+    min-width: 0;
+    border-left: 0;
+    padding-top: env(safe-area-inset-top);
+  }
+}
